@@ -1,0 +1,47 @@
+name: 新品監控
+
+on:
+  schedule:
+    # GitHub Actions 排程最小間隔是 5 分鐘，且系統忙碌時可能會延遲，
+    # 不保證每次都準時觸發，屬正常現象。
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}  # 允許在 GitHub 網頁上手動點擊執行，方便測試
+
+permissions:
+  contents: write  # 需要這個權限才能把最新的商品記錄 commit 回這個 repo
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取出程式碼
+        uses: actions/checkout@v4
+
+      - name: 設定 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安裝套件
+        run: |
+          pip install -r requirements.txt
+
+      - name: 安裝 Playwright 瀏覽器引擎
+        run: |
+          python -m playwright install --with-deps chromium
+
+      - name: 執行監控腳本
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python watcher.py
+
+      - name: 把最新的商品記錄存回 repo
+        run: |
+          git config user.name "funbox-watcher-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state/
+          # 如果這次執行沒有任何變化（沒有新商品、狀態沒變），就不用 commit
+          git diff --staged --quiet || git commit -m "更新商品監控記錄 [skip ci]"
+          git push
