@@ -43,5 +43,18 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add state/
           # 如果這次執行沒有任何變化（沒有新商品、狀態沒變），就不用 commit
-          git diff --staged --quiet || git commit -m "更新商品監控記錄 [skip ci]"
-          git push
+          if git diff --staged --quiet; then
+            echo "沒有變化，不需要 commit"
+          else
+            git commit -m "更新商品監控記錄 [skip ci]"
+            # push 有可能因為同時間有其他 commit（例如手動編輯過 state 檔案）而衝突，
+            # 這裡加上重試機制：失敗就先同步最新版本再重推，最多試 5 次
+            for i in 1 2 3 4 5; do
+              if git push; then
+                echo "push 成功"
+                break
+              fi
+              echo "push 失敗，嘗試同步最新版本後重試（第 $i 次）"
+              git pull --rebase origin main
+            done
+          fi
