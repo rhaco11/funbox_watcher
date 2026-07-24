@@ -151,7 +151,7 @@ def send_telegram_message(token: str, chat_id: str, text: str):
         log("Telegram 通知已送出")
 
 
-def check_target(target: dict, token: str, chat_id: str, debug: bool = False):
+def check_target(target: dict, token: str, chat_ids: list, debug: bool = False):
     name = target.get("name", "未命名分類")
     url = target["url"]
     log(f"檢查中：{name} ({url})")
@@ -183,7 +183,8 @@ def check_target(target: dict, token: str, chat_id: str, debug: bool = False):
             title = current_products[u] or "(名稱擷取失敗，點連結查看)"
             lines.append(f"• {title}\n{u}")
         message = "\n\n".join(lines)
-        send_telegram_message(token, chat_id, message)
+        for chat_id in chat_ids:
+            send_telegram_message(token, chat_id, message)
     else:
         log("沒有新商品。")
 
@@ -196,24 +197,29 @@ def main():
     # 優先讀取環境變數（給 GitHub Actions 等雲端環境用 Secrets 注入），
     # 本機執行時如果沒有設環境變數，就退回讀取 config.json 裡的值。
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or config.get("telegram_bot_token", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID") or config.get("telegram_chat_id", "")
+    raw_chat_id = os.environ.get("TELEGRAM_CHAT_ID") or config.get("telegram_chat_id", "")
+    # 支援多個 Chat ID，用逗號分隔（例如 "111111,222222,333333"），
+    # 每個朋友各自跟 bot 私聊拿到自己的 Chat ID 後加進這個清單即可。
+    chat_ids = [c.strip() for c in str(raw_chat_id).split(",") if c.strip()]
     targets = config.get("watch_targets", [])
 
     if not token or "在這裡貼上" in token:
         log("尚未設定 telegram_bot_token（環境變數 TELEGRAM_BOT_TOKEN 或 config.json 皆可），請先設定。")
         sys.exit(1)
-    if not chat_id:
+    if not chat_ids:
         log("尚未設定 telegram_chat_id（環境變數 TELEGRAM_CHAT_ID 或 config.json 皆可），請先設定。")
         sys.exit(1)
     if not targets:
         log("config.json 的 watch_targets 是空的，沒有任何要監控的網址。")
         sys.exit(1)
 
+    log(f"這次會通知的 Chat ID 共 {len(chat_ids)} 個。")
+
     debug = "--debug" in sys.argv
 
     for i, target in enumerate(targets):
         # debug 模式下只對第一個目標跑，並存下截圖/HTML，避免產生太多除錯檔案
-        check_target(target, token, chat_id, debug=(debug and i == 0))
+        check_target(target, token, chat_ids, debug=(debug and i == 0))
 
 
 if __name__ == "__main__":
