@@ -7,28 +7,34 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch: {}  # 允許在 GitHub 網頁上手動點擊執行，方便測試
 
+# 避免同一時間有多個執行重疊在跑：如果新的觸發進來時，
+# 上一次還沒跑完，就直接取消上一次、只讓最新這次繼續執行。
+# 這樣可以避免「兩個執行各自讀到舊記錄、各自誤判成新商品、各自發一次通知」的重複通知問題。
+concurrency:
+  group: funbox-watcher-run
+  cancel-in-progress: true
+
 permissions:
   contents: write  # 需要這個權限才能把最新的商品記錄 commit 回這個 repo
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    # 用微軟官方已經預先裝好 Playwright + Chromium 的容器環境，
+    # 省掉每次重新安裝瀏覽器引擎的時間（版本要跟 requirements.txt 裡鎖定的版本一致）
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.61.0-noble
     steps:
+      - name: 確保容器裡有 git（這個容器映像檔預設可能沒裝）
+        run: |
+          apt-get update -qq && apt-get install -y -qq git
+
       - name: 取出程式碼
         uses: actions/checkout@v4
 
-      - name: 設定 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: 安裝套件
         run: |
-          pip install -r requirements.txt
-
-      - name: 安裝 Playwright 瀏覽器引擎
-        run: |
-          python -m playwright install --with-deps chromium
+          pip install --no-cache-dir -r requirements.txt
 
       - name: 執行監控腳本
         env:
