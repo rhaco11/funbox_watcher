@@ -12,7 +12,7 @@ on:
 # 這樣可以避免「兩個執行各自讀到舊記錄、各自誤判成新商品、各自發一次通知」的重複通知問題。
 concurrency:
   group: funbox-watcher-run
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write  # 需要這個權限才能把最新的商品記錄 commit 回這個 repo
