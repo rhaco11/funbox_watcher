@@ -107,29 +107,29 @@ def fetch_products(url: str, debug: bool = False) -> dict:
             window.chrome = { runtime: {} };
             """
         )
+        page.goto(url, timeout=30000, wait_until="domcontentloaded")
+
+        anchors = []
         try:
-            page.goto(url, timeout=30000, wait_until="networkidle")
+            # 直接等「商品連結真的出現在畫面上」，出現就立刻繼續，
+            # 不用像之前那樣死等「整個網路完全安靜」（有些頁面因為持續的
+            # 追蹤/廣告背景請求，永遠不會真正安靜，會白白多等將近 30 秒）
+            page.wait_for_selector("a[href*='/product']", timeout=8000)
+            anchors = page.eval_on_selector_all(
+                "a[href*='/product']",
+                """els => els.map(el => ({
+                    href: el.getAttribute('href'),
+                    text: el.innerText.trim()
+                }))"""
+            )
         except Exception:
-            # networkidle 有時等不到（例如有背景輪詢），改用較寬鬆的等待方式
-            page.goto(url, timeout=30000, wait_until="load")
-            page.wait_for_timeout(3000)  # 額外等 3 秒讓 JS 渲染完成
+            pass
 
-        # 保險起見，再多等一下，確保商品區塊真的渲染完成
-        page.wait_for_timeout(2500)
-
-        anchors = page.eval_on_selector_all(
-            "a[href*='/product']",
-            """els => els.map(el => ({
-                href: el.getAttribute('href'),
-                text: el.innerText.trim()
-            }))"""
-        )
-
-        # 有些網站（例如商品資料是額外用比較慢的背景請求載入）
-        # 第一次抓的時候畫面可能還在轉圈圈、商品還沒跑出來，
-        # 這裡多等一段時間後重試一次，避免誤判成「沒有商品」
+        # 有些網站（例如商品資料是額外用比較慢的背景請求載入，
+        # 或本來就沒有商品）第一次等 8 秒還是沒等到，
+        # 這裡多給一段時間後重試一次，避免誤判成「沒有商品」
         if not anchors:
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(6000)
             anchors = page.eval_on_selector_all(
                 "a[href*='/product']",
                 """els => els.map(el => ({
