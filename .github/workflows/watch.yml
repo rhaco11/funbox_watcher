@@ -8,8 +8,9 @@ on:
   workflow_dispatch: {}  # 允許在 GitHub 網頁上手動點擊執行，方便測試
 
 # 避免同一時間有多個執行重疊在跑：如果新的觸發進來時，
-# 上一次還沒跑完，就直接取消上一次、只讓最新這次繼續執行。
-# 這樣可以避免「兩個執行各自讀到舊記錄、各自誤判成新商品、各自發一次通知」的重複通知問題。
+# 上一次還沒跑完，就讓它排隊等待，等上一次真正跑完再開始，
+# 這樣可以避免「兩個執行各自讀到舊記錄、各自誤判成新商品、各自發一次通知」的重複通知問題，
+# 同時保證每一次觸發最終都會完整執行完畢（不會被半途取消）。
 concurrency:
   group: funbox-watcher-run
   cancel-in-progress: false
@@ -45,6 +46,8 @@ jobs:
 
       - name: 把最新的商品記錄存回 repo
         run: |
+          cd "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.name "funbox-watcher-bot"
           git config user.email "actions@users.noreply.github.com"
           git add state/
