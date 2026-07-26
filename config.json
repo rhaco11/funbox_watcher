@@ -3,13 +3,18 @@
   "telegram_chat_id": "留空即可，正式環境會從 GitHub Secrets 的 TELEGRAM_CHAT_ID 讀取",
   "check_interval_note": "執行頻率由 .github/workflows/watch.yml 裡的 cron 設定控制，不是這個檔案",
   "watch_targets": [
-    {
-      "name": "戰鬥陀螺",
-      "url": "https://shop.funbox.com.tw/collections/%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA"
-    },
-    {
-      "name": "誠品-BEYBLADE X戰鬥陀螺精選策展",
-      "url": "https://www.eslite.com/exhibitions/CU202503-00091"
-    }
-  ]
+  {
+    "name": "戰鬥陀螺",
+    "url": "https://shop.funbox.com.tw/collections/%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA"
+  },
+  {
+    "name": "誠品-BEYBLADE X戰鬥陀螺精選策展",
+    "url": "https://www.eslite.com/exhibitions/CU202503-00091"
+  },
+  {
+    "name": "momo-UX04極限衝擊對戰組U",
+    "url": "https://www.momoshop.com.tw/product/15462754?ctype=B&sourcePageType=4",
+    "type": "stock"
+  }
+]
 }
