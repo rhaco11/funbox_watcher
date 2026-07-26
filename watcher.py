@@ -21,6 +21,7 @@ import urllib.parse
 from datetime import datetime
 
 import requests
+from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -184,6 +185,76 @@ def send_telegram_message(token: str, chat_id: str, text: str):
         log("Telegram 通知已送出")
 
 
+def fetch_stock_status(url: str) -> dict:
+    """
+    針對「單一商品頁」用輕量的 requests 直接讀取 HTML，
+    不需要開瀏覽器，速度快很多，適合像 momo 這種商品頁
+    是伺服器端直接產生好內容（不是 JS 動態組裝）的網站。
+
+    回傳 {"availability": "instock" 或 "out of stock" 等, "title": 商品名稱}
+    """
+    headers = {"User-Agent": USER_AGENT, "Accept-Language": "zh-TW,zh;q=0.9"}
+    resp = requests.get(url, headers=headers, timeout=20)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    availability = None
+    tag = soup.find("meta", attrs={"name": "product:availability"}) or \
+          soup.find("meta", attrs={"property": "product:availability"})
+    if tag and tag.get("content"):
+        availability = tag["content"].strip().lower()
+
+    title = None
+    title_tag = soup.find("meta", attrs={"name": "og:title"}) or \
+                soup.find("meta", attrs={"property": "og:title"})
+    if title_tag and title_tag.get("content"):
+        title = title_tag["content"].strip()
+
+    return {"availability": availability, "title": title or url}
+
+
+def check_stock_target(target: dict, token: str, chat_ids: list):
+    """
+    補貨監控模式：只追蹤單一商品頁的庫存狀態，
+    從「缺貨」變成「有貨」的那一刻才通知，不是每次執行都通知。
+    """
+    name = target.get("name", "未命名商品")
+    url = target["url"]
+    log(f"檢查補貨狀態：{name} ({url})")
+
+    try:
+        current = fetch_stock_status(url)
+    except Exception as e:
+        log(f"抓取失敗：{e}")
+        return
+
+    if current["availability"] is None:
+        log("這次抓不到庫存標籤，可能是網站結構改變，請檢查。")
+        return
+
+    log(f"目前庫存狀態：{current['availability']}")
+
+    previous = load_previous_products(url)  # 這裡沿用同一套狀態存取機制
+
+    if previous is None:
+        save_current_products(url, current)
+        log(f"首次執行，已記錄目前庫存狀態（{current['availability']}），之後狀態變成有貨才會通知。")
+        return
+
+    was_out_of_stock = previous.get("availability") not in ("instock", "in stock")
+    is_now_in_stock = current["availability"] in ("instock", "in stock")
+
+    if was_out_of_stock and is_now_in_stock:
+        log("偵測到補貨！")
+        message = f"📦【{name}】補貨了！\n\n{current['title']}\n{url}"
+        for chat_id in chat_ids:
+            send_telegram_message(token, chat_id, message)
+    else:
+        log("庫存狀態沒有變化（或本來就有貨，不算補貨事件）。")
+
+    save_current_products(url, current)
+
+
 def check_target(target: dict, token: str, chat_ids: list, debug: bool = False):
     name = target.get("name", "未命名分類")
     url = target["url"]
@@ -251,8 +322,12 @@ def main():
     debug = "--debug" in sys.argv
 
     for i, target in enumerate(targets):
-        # debug 模式下只對第一個目標跑，並存下截圖/HTML，避免產生太多除錯檔案
-        check_target(target, token, chat_ids, debug=(debug and i == 0))
+        target_type = target.get("type", "collection")
+        if target_type == "stock":
+            check_stock_target(target, token, chat_ids)
+        else:
+            # debug 模式下只對第一個目標跑，並存下截圖/HTML，避免產生太多除錯檔案
+            check_target(target, token, chat_ids, debug=(debug and i == 0))
 
 
 if __name__ == "__main__":
