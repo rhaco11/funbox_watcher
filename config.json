@@ -4,14 +4,17 @@
   "check_interval_note": "執行頻率由 .github/workflows/watch.yml 裡的 cron 設定控制，不是這個檔案",
   "watch_targets": [
     {
+      "id": "funbox",
       "name": "戰鬥陀螺",
       "url": "https://shop.funbox.com.tw/collections/%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA"
     },
     {
+      "id": "eslite",
       "name": "誠品-BEYBLADE X戰鬥陀螺精選策展",
       "url": "https://www.eslite.com/exhibitions/CU202503-00091"
     },
     {
+      "id": "momo_bx50",
       "name": "momo-BX50天堂日輪隨機強化組",
       "url": "https://www.momoshop.com.tw/product/15462750?Area=search&mdiv=403&oid=1_1&cid=index&kw=%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA&ecTagNos=",
       "type": "stock"
