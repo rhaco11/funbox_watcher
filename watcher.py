@@ -115,7 +115,7 @@ def fetch_products(url: str, debug: bool = False) -> dict:
             # 直接等「商品連結真的出現在畫面上」，出現就立刻繼續，
             # 不用像之前那樣死等「整個網路完全安靜」（有些頁面因為持續的
             # 追蹤/廣告背景請求，永遠不會真正安靜，會白白多等將近 30 秒）
-            page.wait_for_selector("a[href*='/product']", timeout=8000)
+            page.wait_for_selector("a[href*='/product']", timeout=12000)
             anchors = page.eval_on_selector_all(
                 "a[href*='/product']",
                 """els => els.map(el => ({
@@ -127,10 +127,13 @@ def fetch_products(url: str, debug: bool = False) -> dict:
             pass
 
         # 有些網站（例如商品資料是額外用比較慢的背景請求載入，
-        # 或本來就沒有商品）第一次等 8 秒還是沒等到，
-        # 這裡多給一段時間後重試一次，避免誤判成「沒有商品」
-        if not anchors:
-            page.wait_for_timeout(6000)
+        # 或本來就沒有商品）第一次沒等到，這裡多重試兩次，
+        # 避免只是單純載入比較慢，就被誤判成「沒有商品」而覆蓋掉正確記錄
+        retry_waits = [5000, 8000]
+        for wait_ms in retry_waits:
+            if anchors:
+                break
+            page.wait_for_timeout(wait_ms)
             anchors = page.eval_on_selector_all(
                 "a[href*='/product']",
                 """els => els.map(el => ({
@@ -320,6 +323,16 @@ def main():
     log(f"這次會通知的 Chat ID 共 {len(chat_ids)} 個。")
 
     debug = "--debug" in sys.argv
+
+    # 支援只跑指定的單一目標（給平行執行的 GitHub Actions matrix 用），
+    # 每個平行 job 只設定自己負責的 TARGET_ID，就只會處理那一個目標，
+    # 不設定就維持原本「依序跑完清單裡所有目標」的行為（本機測試常用這個）
+    target_id = os.environ.get("TARGET_ID")
+    if target_id:
+        targets = [t for t in targets if t.get("id") == target_id]
+        if not targets:
+            log(f"找不到 id 為 '{target_id}' 的監控目標，請檢查 config.json 或 TARGET_ID 設定。")
+            sys.exit(1)
 
     for i, target in enumerate(targets):
         target_type = target.get("type", "collection")
