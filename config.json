@@ -2,10 +2,6 @@
   "telegram_bot_token": "留空即可，正式環境會從 GitHub Secrets 的 TELEGRAM_BOT_TOKEN 讀取",
   "telegram_chat_id": "留空即可，正式環境會從 GitHub Secrets 的 TELEGRAM_CHAT_ID 讀取",
   "check_interval_note": "執行頻率由 .github/workflows/watch.yml 裡的 cron 設定控制，不是這個檔案",
-  {
-  "telegram_bot_token": "留空即可，正式環境會從 GitHub Secrets 的 TELEGRAM_BOT_TOKEN 讀取",
-  "telegram_chat_id": "留空即可，正式環境會從 GitHub Secrets 的 TELEGRAM_CHAT_ID 讀取",
-  "check_interval_note": "執行頻率由 .github/workflows/watch.yml 裡的 cron 設定控制，不是這個檔案",
   "watch_targets": [
     {
       "name": "戰鬥陀螺",
@@ -21,5 +17,4 @@
       "type": "stock"
     }
   ]
-}
 }
