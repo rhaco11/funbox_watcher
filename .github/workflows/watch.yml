@@ -7,14 +7,6 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch: {}  # 允許在 GitHub 網頁上手動點擊執行，方便測試
 
-# 避免同一時間有多個執行重疊在跑：如果新的觸發進來時，
-# 上一次還沒跑完，就讓它排隊等待，等上一次真正跑完再開始，
-# 這樣可以避免「兩個執行各自讀到舊記錄、各自誤判成新商品、各自發一次通知」的重複通知問題，
-# 同時保證每一次觸發最終都會完整執行完畢（不會被半途取消）。
-concurrency:
-  group: funbox-watcher-run
-  cancel-in-progress: false
-
 permissions:
   contents: write  # 需要這個權限才能把最新的商品記錄 commit 回這個 repo
 
@@ -25,6 +17,21 @@ jobs:
     # 省掉每次重新安裝瀏覽器引擎的時間（版本要跟 requirements.txt 裡鎖定的版本一致）
     container:
       image: mcr.microsoft.com/playwright/python:v1.61.0-noble
+
+    # 矩陣並行：每個目標各自是一個獨立的 job，同時開始執行，互不等待。
+    # 之後要新增/移除監控目標，只要同時改這裡的清單跟 config.json 裡的 id 即可。
+    strategy:
+      fail-fast: false  # 其中一個目標失敗，不要連帶取消其他還在跑的目標
+      matrix:
+        target_id: [funbox, eslite, momo_bx50]
+
+    # 並行控制的重點：group 名稱要包含 target_id，
+    # 這樣「同一個目標」自己跟自己排隊（避免同一目標重疊執行、重複通知），
+    # 但「不同目標」之間 group 名稱不同，可以真正同時平行執行，不會互相卡住。
+    concurrency:
+      group: funbox-watcher-${{ matrix.target_id }}
+      cancel-in-progress: false
+
     steps:
       - name: 確保容器裡有 git（這個容器映像檔預設可能沒裝）
         run: |
@@ -37,10 +44,11 @@ jobs:
         run: |
           pip install --no-cache-dir -r requirements.txt
 
-      - name: 執行監控腳本
+      - name: "執行監控腳本（只處理：${{ matrix.target_id }}）"
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TARGET_ID: ${{ matrix.target_id }}
         run: |
           python watcher.py
 
@@ -55,8 +63,8 @@ jobs:
           if git diff --staged --quiet; then
             echo "沒有變化，不需要 commit"
           else
-            git commit -m "更新商品監控記錄 [skip ci]"
-            # push 有可能因為同時間有其他 commit（例如手動編輯過 state 檔案）而衝突，
+            git commit -m "更新商品監控記錄（${{ matrix.target_id }}） [skip ci]"
+            # push 有可能因為同時間有其他 commit（例如另一個平行目標剛好也在推送）而衝突，
             # 這裡加上重試機制：失敗就先同步最新版本再重推，最多試 5 次
             for i in 1 2 3 4 5; do
               if git push; then
