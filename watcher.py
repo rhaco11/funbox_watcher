@@ -294,3 +294,27 @@ def main():
         log("尚未設定 telegram_chat_id（環境變數 TELEGRAM_CHAT_ID 或 config.json 皆可），請先設定。")
         sys.exit(1)
     if not targets:
+        log("config.json 的 watch_targets 是空的，沒有任何要監控的網址。")
+        sys.exit(1)
+
+    log(f"這次會通知的 Chat ID 共 {len(chat_ids)} 個。")
+
+    debug = "--debug" in sys.argv
+
+    target_id = os.environ.get("TARGET_ID")
+    if target_id:
+        targets = [t for t in targets if t.get("id") == target_id]
+        if not targets:
+            log(f"找不到 id 為 '{target_id}' 的監控目標，請檢查 config.json 或 TARGET_ID 設定。")
+            sys.exit(1)
+
+    for i, target in enumerate(targets):
+        target_type = target.get("type", "collection")
+        if target_type == "stock":
+            check_stock_target(target, token, chat_ids)
+        else:
+            check_target(target, token, chat_ids, debug=(debug and i == 0))
+
+
+if __name__ == "__main__":
+    main()
