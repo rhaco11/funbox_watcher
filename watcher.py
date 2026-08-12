@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-funbox-watcher / 通用版 Cyberbiz 商品分類頁監控腳本
+funbox-watcher / 通用版商品分類頁監控腳本
 ------------------------------------------------
 用途：定期檢查 config.json 裡列出的分類頁網址，
       發現有「之前沒看過的商品」就透過 Telegram Bot 發通知。
 
 用法：
     python3 watcher.py
+    TARGET_ID=xxx python3 watcher.py   # 只跑指定的單一目標
 
 建議：透過 cron（Mac/Linux）或工作排程器（Windows）定期執行，
       不需要腳本自己常駐背景。
@@ -15,6 +16,7 @@ funbox-watcher / 通用版 Cyberbiz 商品分類頁監控腳本
 
 import json
 import os
+import re
 import sys
 import hashlib
 import urllib.parse
@@ -35,6 +37,8 @@ USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
+DEFAULT_LINK_REGEX = r"/product"
+
 
 def log(msg: str):
     line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
@@ -52,7 +56,6 @@ def load_config():
 
 
 def state_file_for(url: str) -> str:
-    """每個監控網址對應一個獨立的狀態檔，用網址的 hash 當檔名避免特殊字元問題"""
     os.makedirs(STATE_DIR, exist_ok=True)
     key = hashlib.md5(url.encode("utf-8")).hexdigest()
     return os.path.join(STATE_DIR, f"{key}.json")
@@ -61,7 +64,7 @@ def state_file_for(url: str) -> str:
 def load_previous_products(url: str):
     path = state_file_for(url)
     if not os.path.exists(path):
-        return None  # 代表第一次執行，尚無基準
+        return None
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -72,15 +75,9 @@ def save_current_products(url: str, products: dict):
         json.dump(products, f, ensure_ascii=False, indent=2)
 
 
-def fetch_products(url: str, debug: bool = False) -> dict:
-    """
-    用 Playwright 開一個無頭瀏覽器實際載入頁面，
-    等 JavaScript 把商品資料畫出來後，再讀取當下的 DOM，
-    回傳 {商品網址: 商品名稱} 的字典。
-
-    debug=True 時，會把當下畫面截圖與完整 HTML 存到 debug/ 資料夾，方便排查。
-    """
+def fetch_products(url: str, link_regex: str = DEFAULT_LINK_REGEX, debug: bool = False) -> dict:
     products = {}
+    pattern = re.compile(link_regex)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -98,8 +95,6 @@ def fetch_products(url: str, debug: bool = False) -> dict:
                 "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
             },
         )
-        # 隱藏掉幾個常見的「這是自動化瀏覽器」技術特徵，
-        # 有些網站會檢查這些屬性來判斷是否為機器人
         page.add_init_script(
             """
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -110,37 +105,37 @@ def fetch_products(url: str, debug: bool = False) -> dict:
         )
         page.goto(url, timeout=30000, wait_until="domcontentloaded")
 
-        anchors = []
-        try:
-            # 直接等「商品連結真的出現在畫面上」，出現就立刻繼續，
-            # 不用像之前那樣死等「整個網路完全安靜」（有些頁面因為持續的
-            # 追蹤/廣告背景請求，永遠不會真正安靜，會白白多等將近 30 秒）
-            page.wait_for_selector("a[href*='/product']", timeout=12000)
-            anchors = page.eval_on_selector_all(
-                "a[href*='/product']",
+        def grab_anchors():
+            all_links = page.eval_on_selector_all(
+                "a[href]",
                 """els => els.map(el => ({
                     href: el.getAttribute('href'),
                     text: el.innerText.trim()
                 }))"""
             )
+            return [item for item in all_links if item.get("href") and pattern.search(item["href"])]
+
+        anchors = []
+        try:
+            page.wait_for_function(
+                """(pattern) => {
+                    const re = new RegExp(pattern);
+                    return Array.from(document.querySelectorAll('a[href]'))
+                        .some(a => re.test(a.getAttribute('href') || ''));
+                }""",
+                arg=link_regex,
+                timeout=12000,
+            )
+            anchors = grab_anchors()
         except Exception:
             pass
 
-        # 有些網站（例如商品資料是額外用比較慢的背景請求載入，
-        # 或本來就沒有商品）第一次沒等到，這裡多重試兩次，
-        # 避免只是單純載入比較慢，就被誤判成「沒有商品」而覆蓋掉正確記錄
         retry_waits = [5000, 8000]
         for wait_ms in retry_waits:
             if anchors:
                 break
             page.wait_for_timeout(wait_ms)
-            anchors = page.eval_on_selector_all(
-                "a[href*='/product']",
-                """els => els.map(el => ({
-                    href: el.getAttribute('href'),
-                    text: el.innerText.trim()
-                }))"""
-            )
+            anchors = grab_anchors()
 
         if debug:
             debug_dir = os.path.join(BASE_DIR, "debug")
@@ -153,12 +148,10 @@ def fetch_products(url: str, debug: bool = False) -> dict:
             log(f"除錯檔案已存到：{screenshot_path} 與 {html_path}")
 
         if debug:
-            log(f"debug: a[href*='/product'] 選擇器共找到 {len(anchors)} 個元素")
+            log(f"debug: 符合 link_regex（{link_regex}）的連結共找到 {len(anchors)} 個")
 
         for item in anchors:
             href = item.get("href") or ""
-            if "/product" not in href:
-                continue
             full_url = urllib.parse.urljoin(url, href.split("?")[0])
             text = item.get("text") or ""
             if text:
@@ -189,13 +182,6 @@ def send_telegram_message(token: str, chat_id: str, text: str):
 
 
 def fetch_stock_status(url: str) -> dict:
-    """
-    針對「單一商品頁」用輕量的 requests 直接讀取 HTML，
-    不需要開瀏覽器，速度快很多，適合像 momo 這種商品頁
-    是伺服器端直接產生好內容（不是 JS 動態組裝）的網站。
-
-    回傳 {"availability": "instock" 或 "out of stock" 等, "title": 商品名稱}
-    """
     headers = {"User-Agent": USER_AGENT, "Accept-Language": "zh-TW,zh;q=0.9"}
     resp = requests.get(url, headers=headers, timeout=20)
     resp.raise_for_status()
@@ -217,10 +203,6 @@ def fetch_stock_status(url: str) -> dict:
 
 
 def check_stock_target(target: dict, token: str, chat_ids: list):
-    """
-    補貨監控模式：只追蹤單一商品頁的庫存狀態，
-    從「缺貨」變成「有貨」的那一刻才通知，不是每次執行都通知。
-    """
     name = target.get("name", "未命名商品")
     url = target["url"]
     log(f"檢查補貨狀態：{name} ({url})")
@@ -237,7 +219,7 @@ def check_stock_target(target: dict, token: str, chat_ids: list):
 
     log(f"目前庫存狀態：{current['availability']}")
 
-    previous = load_previous_products(url)  # 這裡沿用同一套狀態存取機制
+    previous = load_previous_products(url)
 
     if previous is None:
         save_current_products(url, current)
@@ -261,22 +243,21 @@ def check_stock_target(target: dict, token: str, chat_ids: list):
 def check_target(target: dict, token: str, chat_ids: list, debug: bool = False):
     name = target.get("name", "未命名分類")
     url = target["url"]
+    link_regex = target.get("link_regex", DEFAULT_LINK_REGEX)
     log(f"檢查中：{name} ({url})")
 
     try:
-        current_products = fetch_products(url, debug=debug)
+        current_products = fetch_products(url, link_regex=link_regex, debug=debug)
     except Exception as e:
         log(f"抓取失敗：{e}")
         return
 
     if not current_products:
-        log("這次抓到 0 件商品（可能是分類本身目前真的沒有商品，也可能是抓取被擋，建議偶爾用 --debug 確認）。")
+        log("這次抓到 0 件商品（可能是分類本身目前真的沒有商品，也可能是抓取被擋或 link_regex 沒對到，建議偶爾用 --debug 確認）。")
 
     previous_products = load_previous_products(url)
 
     if previous_products is None:
-        # 第一次執行，只建立基準，不發通知（避免把現有商品都當成新品轟炸你）
-        # 就算這次是 0 件商品，也要正常存檔，這樣之後才會正確比對出「新商品」
         save_current_products(url, current_products)
         log(f"首次執行，已建立基準（共 {len(current_products)} 件商品），之後才會通知新品。")
         return
@@ -301,12 +282,8 @@ def check_target(target: dict, token: str, chat_ids: list, debug: bool = False):
 def main():
     config = load_config()
 
-    # 優先讀取環境變數（給 GitHub Actions 等雲端環境用 Secrets 注入），
-    # 本機執行時如果沒有設環境變數，就退回讀取 config.json 裡的值。
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or config.get("telegram_bot_token", "")
     raw_chat_id = os.environ.get("TELEGRAM_CHAT_ID") or config.get("telegram_chat_id", "")
-    # 支援多個 Chat ID，用逗號分隔（例如 "111111,222222,333333"），
-    # 每個朋友各自跟 bot 私聊拿到自己的 Chat ID 後加進這個清單即可。
     chat_ids = [c.strip() for c in str(raw_chat_id).split(",") if c.strip()]
     targets = config.get("watch_targets", [])
 
@@ -317,31 +294,3 @@ def main():
         log("尚未設定 telegram_chat_id（環境變數 TELEGRAM_CHAT_ID 或 config.json 皆可），請先設定。")
         sys.exit(1)
     if not targets:
-        log("config.json 的 watch_targets 是空的，沒有任何要監控的網址。")
-        sys.exit(1)
-
-    log(f"這次會通知的 Chat ID 共 {len(chat_ids)} 個。")
-
-    debug = "--debug" in sys.argv
-
-    # 支援只跑指定的單一目標（給平行執行的 GitHub Actions matrix 用），
-    # 每個平行 job 只設定自己負責的 TARGET_ID，就只會處理那一個目標，
-    # 不設定就維持原本「依序跑完清單裡所有目標」的行為（本機測試常用這個）
-    target_id = os.environ.get("TARGET_ID")
-    if target_id:
-        targets = [t for t in targets if t.get("id") == target_id]
-        if not targets:
-            log(f"找不到 id 為 '{target_id}' 的監控目標，請檢查 config.json 或 TARGET_ID 設定。")
-            sys.exit(1)
-
-    for i, target in enumerate(targets):
-        target_type = target.get("type", "collection")
-        if target_type == "stock":
-            check_stock_target(target, token, chat_ids)
-        else:
-            # debug 模式下只對第一個目標跑，並存下截圖/HTML，避免產生太多除錯檔案
-            check_target(target, token, chat_ids, debug=(debug and i == 0))
-
-
-if __name__ == "__main__":
-    main()
