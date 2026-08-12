@@ -18,6 +18,12 @@
       "name": "momo-BX50天堂日輪隨機強化組",
       "url": "https://www.momoshop.com.tw/product/15462750?Area=search&mdiv=403&oid=1_1&cid=index&kw=%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA&ecTagNos=",
       "type": "stock"
+    },
+    {
+      "id": "tcsb",
+      "name": "墊腳石-戰鬥陀螺搜尋",
+      "url": "https://www.tcsb.com.tw/search?query=%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA",
+      "link_regex": "^https://www\\.tcsb\\.com\\.tw/\\d{10,}"
     }
   ]
 }
