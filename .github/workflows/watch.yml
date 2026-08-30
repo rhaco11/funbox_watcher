@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false  # 其中一個目標失敗，不要連帶取消其他還在跑的目標
       matrix:
-          target_id: [funbox, eslite, momo_bx50, tcsb, eslite_search]
+          target_id: [funbox, eslite, tcsb, eslite_search]
 
     # 並行控制的重點：group 名稱要包含 target_id，
     # 這樣「同一個目標」自己跟自己排隊（避免同一目標重疊執行、重複通知），
