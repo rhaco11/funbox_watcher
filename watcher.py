@@ -56,6 +56,8 @@ def load_config():
 
 
 def state_file_for(url: str) -> str:
+    """每個監控網址對應一個獨立的狀態檔，用網址的 hash 當檔名避免特殊字元問題。
+    多頁合併時用「基準網址」（第一頁的網址）當 key，確保狀態檔案穩定不變。"""
     os.makedirs(STATE_DIR, exist_ok=True)
     key = hashlib.md5(url.encode("utf-8")).hexdigest()
     return os.path.join(STATE_DIR, f"{key}.json")
@@ -75,7 +77,12 @@ def save_current_products(url: str, products: dict):
         json.dump(products, f, ensure_ascii=False, indent=2)
 
 
-def fetch_products(url: str, link_regex: str = DEFAULT_LINK_REGEX, debug: bool = False) -> dict:
+def fetch_products_single_page(url: str, link_regex: str, debug: bool = False, debug_tag: str = "") -> dict:
+    """
+    用 Playwright 開一個無頭瀏覽器實際載入單一頁面，
+    等 JavaScript 把商品資料畫出來後，再讀取當下的 DOM，
+    回傳 {商品網址: 商品名稱} 的字典。
+    """
     products = {}
     pattern = re.compile(link_regex)
 
@@ -140,14 +147,13 @@ def fetch_products(url: str, link_regex: str = DEFAULT_LINK_REGEX, debug: bool =
         if debug:
             debug_dir = os.path.join(BASE_DIR, "debug")
             os.makedirs(debug_dir, exist_ok=True)
-            screenshot_path = os.path.join(debug_dir, "screenshot.png")
-            html_path = os.path.join(debug_dir, "page.html")
+            suffix = f"_{debug_tag}" if debug_tag else ""
+            screenshot_path = os.path.join(debug_dir, f"screenshot{suffix}.png")
+            html_path = os.path.join(debug_dir, f"page{suffix}.html")
             page.screenshot(path=screenshot_path, full_page=True)
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(page.content())
             log(f"除錯檔案已存到：{screenshot_path} 與 {html_path}")
-
-        if debug:
             log(f"debug: 符合 link_regex（{link_regex}）的連結共找到 {len(anchors)} 個")
 
         for item in anchors:
@@ -160,6 +166,24 @@ def fetch_products(url: str, link_regex: str = DEFAULT_LINK_REGEX, debug: bool =
                 products[full_url] = ""
 
         browser.close()
+
+    return products
+
+
+def fetch_products(url: str, link_regex: str = DEFAULT_LINK_REGEX, debug: bool = False, extra_urls=None) -> dict:
+    """
+    抓取商品清單，支援合併多個網址的結果（例如同一個搜尋結果的第 2、3 頁），
+    這樣可以突破單一網頁只顯示固定筆數（例如每頁 20 筆）的限制。
+
+    extra_urls：額外要一併抓取、合併進來的網址清單（例如分頁的第 2 頁）。
+    """
+    products = fetch_products_single_page(url, link_regex, debug=debug, debug_tag="p1" if extra_urls else "")
+
+    for i, extra_url in enumerate(extra_urls or [], start=2):
+        extra_products = fetch_products_single_page(
+            extra_url, link_regex, debug=debug, debug_tag=f"p{i}"
+        )
+        products.update(extra_products)
 
     return products
 
@@ -244,16 +268,19 @@ def check_target(target: dict, token: str, chat_ids: list, debug: bool = False):
     name = target.get("name", "未命名分類")
     url = target["url"]
     link_regex = target.get("link_regex", DEFAULT_LINK_REGEX)
-    log(f"檢查中：{name} ({url})")
+    extra_urls = target.get("extra_urls", [])
+    log(f"檢查中：{name} ({url})" + (f"（含 {len(extra_urls)} 個額外分頁）" if extra_urls else ""))
 
     try:
-        current_products = fetch_products(url, link_regex=link_regex, debug=debug)
+        current_products = fetch_products(url, link_regex=link_regex, debug=debug, extra_urls=extra_urls)
     except Exception as e:
         log(f"抓取失敗：{e}")
         return
 
     if not current_products:
         log("這次抓到 0 件商品（可能是分類本身目前真的沒有商品，也可能是抓取被擋或 link_regex 沒對到，建議偶爾用 --debug 確認）。")
+    else:
+        log(f"這次共抓到 {len(current_products)} 件不重複商品。")
 
     previous_products = load_previous_products(url)
 
