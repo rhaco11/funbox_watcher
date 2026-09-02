@@ -9,11 +9,6 @@
       "url": "https://shop.funbox.com.tw/collections/%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA"
     },
     {
-      "id": "eslite",
-      "name": "誠品-BEYBLADE X戰鬥陀螺精選策展",
-      "url": "https://www.eslite.com/exhibitions/CU202503-00091"
-    },
-    {
       "id": "tcsb",
       "name": "墊腳石-戰鬥陀螺搜尋",
       "url": "https://www.tcsb.com.tw/search?query=%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA",
@@ -22,7 +17,7 @@
     {
       "id": "eslite_search",
       "name": "誠品-戰鬥陀螺搜尋",
-      "url": "https://www.eslite.com/Search?keyword=%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA&final_price=0,&publishDate=0&sort=manufacturer_date+desc&display=list&start=0&exp=b"
+      "url": "https://www.eslite.com/Search?keyword=%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA&final_price=0,&publishDate=0&sort=manufacturer_date+desc&size=40&display=list&start=0&exp=b"
     }
   ]
 }
