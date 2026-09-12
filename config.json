@@ -18,6 +18,12 @@
       "id": "eslite_search",
       "name": "誠品-BEYBLADE X戰鬥陀螺搜尋",
       "url": "https://www.eslite.com/Search?keyword=BEYBLADE+X%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA&final_price=0,&publishDate=0&sort=manufacturer_date+desc&display=list&start=0&exp=b"
+    },
+    {
+      "id": "goopi_kai10f3",
+      "name": "GOOPi-Kai10-F3 Nomnomu",
+      "url": "https://www.goopi.co/products/kai10-f3-nomnomu-67",
+      "type": "appear"
     }
   ]
 }
