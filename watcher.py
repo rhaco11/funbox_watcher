@@ -5,6 +5,7 @@ funbox-watcher / 通用版商品分類頁監控腳本
 ------------------------------------------------
 用途：定期檢查 config.json 裡列出的分類頁網址，
       發現有「之前沒看過的商品」就透過 Telegram Bot 發通知。
+      也支援單一商品的補貨監控、以及「網址上線」監控。
 
 用法：
     python3 watcher.py
@@ -56,8 +57,7 @@ def load_config():
 
 
 def state_file_for(url: str) -> str:
-    """每個監控網址對應一個獨立的狀態檔，用網址的 hash 當檔名避免特殊字元問題。
-    多頁合併時用「基準網址」（第一頁的網址）當 key，確保狀態檔案穩定不變。"""
+    """每個監控網址對應一個獨立的狀態檔，用網址的 hash 當檔名避免特殊字元問題。"""
     os.makedirs(STATE_DIR, exist_ok=True)
     key = hashlib.md5(url.encode("utf-8")).hexdigest()
     return os.path.join(STATE_DIR, f"{key}.json")
@@ -172,10 +172,8 @@ def fetch_products_single_page(url: str, link_regex: str, debug: bool = False, d
 
 def fetch_products(url: str, link_regex: str = DEFAULT_LINK_REGEX, debug: bool = False, extra_urls=None) -> dict:
     """
-    抓取商品清單，支援合併多個網址的結果（例如同一個搜尋結果的第 2、3 頁），
-    這樣可以突破單一網頁只顯示固定筆數（例如每頁 20 筆）的限制。
-
-    extra_urls：額外要一併抓取、合併進來的網址清單（例如分頁的第 2 頁）。
+    抓取商品清單，支援合併多個網址的結果（例如同一個搜尋結果的第 2、3 頁）。
+    extra_urls：額外要一併抓取、合併進來的網址清單。
     """
     products = fetch_products_single_page(url, link_regex, debug=debug, debug_tag="p1" if extra_urls else "")
 
@@ -206,6 +204,10 @@ def send_telegram_message(token: str, chat_id: str, text: str):
 
 
 def fetch_stock_status(url: str) -> dict:
+    """
+    針對「單一商品頁」用輕量的 requests 直接讀取 HTML，適合伺服器端
+    直接產生好內容（不是 JS 動態組裝）的網站，例如 momo。
+    """
     headers = {"User-Agent": USER_AGENT, "Accept-Language": "zh-TW,zh;q=0.9"}
     resp = requests.get(url, headers=headers, timeout=20)
     resp.raise_for_status()
@@ -227,6 +229,10 @@ def fetch_stock_status(url: str) -> dict:
 
 
 def check_stock_target(target: dict, token: str, chat_ids: list):
+    """
+    補貨監控模式：只追蹤單一商品頁的庫存狀態，
+    從「缺貨」變成「有貨」的那一刻才通知。
+    """
     name = target.get("name", "未命名商品")
     url = target["url"]
     log(f"檢查補貨狀態：{name} ({url})")
@@ -260,6 +266,74 @@ def check_stock_target(target: dict, token: str, chat_ids: list):
             send_telegram_message(token, chat_id, message)
     else:
         log("庫存狀態沒有變化（或本來就有貨，不算補貨事件）。")
+
+    save_current_products(url, current)
+
+
+def fetch_appear_status(url: str) -> dict:
+    """
+    偵測「這個網址現在是不是真的存在」——適合用在「商品頁還沒建立、
+    打開會被導回首頁或分類頁」的情境，例如即將上架、目前還查無此頁的商品。
+
+    判斷方式：實際發出請求，看最終抵達的網址（追蹤過重新導向後）
+    是否還停留在原本要求的網址上；如果被導去別的網址（例如首頁），
+    代表這個頁面目前還不存在／還沒生效。
+    """
+    headers = {"User-Agent": USER_AGENT, "Accept-Language": "zh-TW,zh;q=0.9"}
+    resp = requests.get(url, headers=headers, timeout=20, allow_redirects=True)
+
+    normalized_target = url.split("?")[0].rstrip("/")
+    normalized_final = resp.url.split("?")[0].rstrip("/")
+    appeared = (resp.status_code == 200) and (normalized_final == normalized_target)
+
+    title = None
+    if appeared:
+        try:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            title_tag = soup.find("meta", attrs={"property": "og:title"}) or \
+                        soup.find("meta", attrs={"name": "og:title"})
+            if title_tag and title_tag.get("content"):
+                title = title_tag["content"].strip()
+        except Exception:
+            pass
+
+    return {"appeared": appeared, "final_url": resp.url, "title": title or url}
+
+
+def check_appear_target(target: dict, token: str, chat_ids: list):
+    """
+    「網址上線」監控模式：追蹤一個目前可能還不存在（會被導向別處）的網址，
+    一旦它真的開始生效（不再被導走），就發送通知。
+    """
+    name = target.get("name", "未命名頁面")
+    url = target["url"]
+    log(f"檢查頁面是否已上線：{name} ({url})")
+
+    try:
+        current = fetch_appear_status(url)
+    except Exception as e:
+        log(f"抓取失敗：{e}")
+        return
+
+    log(f"目前狀態：{'已上線' if current['appeared'] else '尚未上線（實際導向：' + current['final_url'] + '）'}")
+
+    previous = load_previous_products(url)
+
+    if previous is None:
+        save_current_products(url, current)
+        log(f"首次執行，已記錄目前狀態（{'已上線' if current['appeared'] else '尚未上線'}），之後變成上線才會通知。")
+        return
+
+    was_not_appeared = not previous.get("appeared", False)
+    is_now_appeared = current["appeared"]
+
+    if was_not_appeared and is_now_appeared:
+        log("偵測到頁面上線！")
+        message = f"🆕【{name}】頁面上線了！\n\n{current['title']}\n{url}"
+        for chat_id in chat_ids:
+            send_telegram_message(token, chat_id, message)
+    else:
+        log("狀態沒有變化。")
 
     save_current_products(url, current)
 
@@ -339,6 +413,8 @@ def main():
         target_type = target.get("type", "collection")
         if target_type == "stock":
             check_stock_target(target, token, chat_ids)
+        elif target_type == "appear":
+            check_appear_target(target, token, chat_ids)
         else:
             check_target(target, token, chat_ids, debug=(debug and i == 0))
 
