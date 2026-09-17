@@ -15,11 +15,6 @@
       "link_regex": "^https://www\\.tcsb\\.com\\.tw/\\d{10,}"
     },
     {
-      "id": "eslite_search",
-      "name": "誠品-BEYBLADE X戰鬥陀螺搜尋",
-      "url": "https://www.eslite.com/Search?keyword=BEYBLADE+X%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA&final_price=0,&publishDate=0&sort=manufacturer_date+desc&display=list&start=0&exp=b"
-    },
-    {
       "id": "eslite_exhibition",
       "name": "誠品-BEYBLADE X戰鬥陀螺基本入門強化改造策展",
       "url": "https://www.eslite.com/exhibitions/CU202608-00061"
