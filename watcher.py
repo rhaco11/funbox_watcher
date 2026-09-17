@@ -5,7 +5,7 @@ funbox-watcher / 通用版商品分類頁監控腳本
 ------------------------------------------------
 用途：定期檢查 config.json 裡列出的分類頁網址，
       發現有「之前沒看過的商品」就透過 Telegram Bot 發通知。
-      也支援單一商品的補貨監控、以及「網址上線」監控。
+      也支援單一商品的補貨監控、網址上線監控、以及關鍵字出現監控。
 
 用法：
     python3 watcher.py
@@ -274,10 +274,6 @@ def fetch_appear_status(url: str) -> dict:
     """
     偵測「這個網址現在是不是真的存在」——適合用在「商品頁還沒建立、
     打開會被導回首頁或分類頁」的情境，例如即將上架、目前還查無此頁的商品。
-
-    判斷方式：實際發出請求，看最終抵達的網址（追蹤過重新導向後）
-    是否還停留在原本要求的網址上；如果被導去別的網址（例如首頁），
-    代表這個頁面目前還不存在／還沒生效。
     """
     headers = {"User-Agent": USER_AGENT, "Accept-Language": "zh-TW,zh;q=0.9"}
     resp = requests.get(url, headers=headers, timeout=20, allow_redirects=True)
@@ -336,6 +332,99 @@ def check_appear_target(target: dict, token: str, chat_ids: list):
         log("狀態沒有變化。")
 
     save_current_products(url, current)
+
+
+def fetch_keyword_presence(url: str, keyword: str, debug: bool = False, debug_tag: str = "keyword") -> bool:
+    """
+    用 Playwright 開瀏覽器載入頁面，抓取畫面上「可見文字」內容，
+    檢查指定的關鍵字有沒有出現在裡面。適合用在像商城首頁這種
+    商品卡片沒有標準連結格式、沒辦法用網址規則判斷的頁面。
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = browser.new_page(
+            user_agent=USER_AGENT,
+            viewport={"width": 1280, "height": 2000},
+            locale="zh-TW",
+            timezone_id="Asia/Taipei",
+            extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8"},
+        )
+        page.add_init_script(
+            """
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'languages', { get: () => ['zh-TW', 'zh', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            window.chrome = { runtime: {} };
+            """
+        )
+        page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        page.wait_for_timeout(8000)  # 給頁面足夠時間把商品卡片渲染出來
+
+        try:
+            body_text = page.inner_text("body")
+        except Exception:
+            body_text = ""
+
+        if debug:
+            debug_dir = os.path.join(BASE_DIR, "debug")
+            os.makedirs(debug_dir, exist_ok=True)
+            screenshot_path = os.path.join(debug_dir, f"screenshot_{debug_tag}.png")
+            text_path = os.path.join(debug_dir, f"text_{debug_tag}.txt")
+            page.screenshot(path=screenshot_path, full_page=True)
+            with open(text_path, "w", encoding="utf-8") as f:
+                f.write(body_text)
+            log(f"除錯截圖：{screenshot_path}")
+            log(f"除錯可見文字：{text_path}")
+
+        browser.close()
+
+    return keyword in body_text
+
+
+def check_keyword_target(target: dict, token: str, chat_ids: list, debug: bool = False):
+    """
+    關鍵字監控模式：追蹤某個關鍵字有沒有出現在頁面上，
+    從「沒出現」變成「出現」的那一刻才通知。
+    """
+    name = target.get("name", "未命名頁面")
+    url = target["url"]
+    keyword = target.get("keyword", "")
+
+    if not keyword:
+        log(f"目標「{name}」缺少 keyword 設定，跳過。")
+        return
+
+    log(f"檢查關鍵字「{keyword}」是否出現：{name} ({url})")
+
+    try:
+        found = fetch_keyword_presence(url, keyword, debug=debug, debug_tag=target.get("id", "keyword"))
+    except Exception as e:
+        log(f"抓取失敗：{e}")
+        return
+
+    log(f"目前狀態：{'關鍵字已出現' if found else '關鍵字尚未出現'}")
+
+    previous = load_previous_products(url)
+
+    if previous is None:
+        save_current_products(url, {"found": found})
+        log(f"首次執行，已記錄目前狀態（{'已出現' if found else '尚未出現'}），之後變成出現才會通知。")
+        return
+
+    was_absent = not previous.get("found", False)
+
+    if was_absent and found:
+        log("偵測到關鍵字出現！")
+        message = f"🆕【{name}】「{keyword}」出現了！\n\n{url}"
+        for chat_id in chat_ids:
+            send_telegram_message(token, chat_id, message)
+    else:
+        log("狀態沒有變化。")
+
+    save_current_products(url, {"found": found})
 
 
 def check_target(target: dict, token: str, chat_ids: list, debug: bool = False):
@@ -415,6 +504,8 @@ def main():
             check_stock_target(target, token, chat_ids)
         elif target_type == "appear":
             check_appear_target(target, token, chat_ids)
+        elif target_type == "keyword":
+            check_keyword_target(target, token, chat_ids, debug=(debug and i == 0))
         else:
             check_target(target, token, chat_ids, debug=(debug and i == 0))
 
